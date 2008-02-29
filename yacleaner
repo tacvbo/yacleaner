@@ -1,0 +1,600 @@
+#!/bin/bash
+#
+# Copyright 2003-2005 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+# $Header: $
+#
+#     Yet Another Cleaner tool for Gentoo
+#
+# Author:
+#       Octavio Ruiz (Ta^3) <tacvbo@tacvbo.net>
+# Parts of Code by:
+#       Ed Catmur <ed@catmur.co.uk>
+# Thanks:
+#       Konstantin Shaposhnikov <k.shaposhnikov@gmail.com>
+#       Thomas de Grenier de Latour <degrenier@easyconnect.fr>
+#
+# http://gentoo.org.mx/yacleaner/
+# http://blog.tacvbo.net/data/files/yacleaner
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY. YOU USE AT YOUR OWN RISK. THE AUTHOR
+# WILL NOT BE LIABLE FOR DATA LOSS, DAMAGES, LOSS OF PROFITS OR ANY
+# OTHER  KIND OF LOSS WHILE USING OR MISUSING THIS SOFTWARE.
+# See the GNU General Public License for more details.
+
+prog_name="yacleaner"
+prog_version="0.5beta"
+release_name="Do you remember me?"
+fullprog="${prog_name}-${prog_version}"
+
+shopt -s extglob
+
+set_color() {
+  NO=$'\x1b[0;0m'   BR=$'\x1b[0;01m'
+  RD=$'\x1b[31;01m' Rd=$'\x1b[00;31m'
+  GR=$'\x1b[32;01m' Gr=$'\x1b[00;32m'
+  CY=$'\x1b[36;01m' Cy=$'\x1b[00;36m'
+  YL=$'\x1b[33;01m' Yl=$'\x1b[00;33m'
+}
+
+check_for_color() {
+  if [[ ! ${option_color} == no ]]; then
+    set_color
+  fi
+}
+
+set_vars() {
+  set_xterm_title "${fullprog}: Setting variables... (this could take a while)"
+  portage_dirs=(`portageq portdir 2>/dev/null` `portageq portdir_overlay 2>/dev/null`)
+  portage_db="/var/db/pkg"
+  portage_distdir=`portageq distdir 2>/dev/null`
+  varname_distdir='$DISTDIR'
+  portage_binpkgdir=`portageq pkgdir 2>/dev/null`
+  varname_binpkgdir='$PKGDIR'
+  portage_worktmpdir="`portageq envvar PORTAGE_TMPDIR 2>/dev/null`/portage"
+  varname_worktmpdir='$PORTAGE_TMPDIR/portage'
+  portage_logdir=`portageq envvar PORT_LOGDIR 2>/dev/null`
+  varname_logdir='$PORT_LOGDIR'
+  set_xterm_title "${fullprog}: Setting variables... done!"
+}
+
+set_xterm_title() {
+  [[ "$TERM" = @(@(x|E|a|k)term|rxvt|screen)* ]] && echo -n $'\x1b']"2;$*"$'\x07' >&2
+  [[ "$TERM" = screen* ]] && echo -n $'\x1b']"k$*"$'\x1b'"\\" >&2
+}
+
+print_version() {
+  cat <<END
+${prog_name}, version ${prog_version} "$release_name"
+Copyright (C) 2003-2005 Gentoo Foundation
+END
+  exit 0
+}
+
+show_help() {
+  check_for_color
+  help_message=${1}
+  shift
+  display_help_args="$*"
+
+  if [[ -n ${help_message} ]]; then
+    cat <<END
+${fullprog}: ${help_message}
+END
+  fi
+  printed_help="yes"
+}
+
+print_help() {
+  help_type=${1:-short}
+  help_more=${2:-0}
+
+  if [[ $help_type = short ]] ; then
+    cat <<END
+
+${BR}Usage:${NO}
+    ${CY}${fullprog}${NO} [ ${GR}options${NO} ] [ ${GR}action${NO} ] < ${CY}dist${NO} | ${CY}binpkg${NO} | ${CY}worktmp${NO} | ${CY}log${NO} | ${CY}all${NO} >
+    ${CY}${fullprog} --help${NO}
+
+${BR}Options:${NO} [ ${GR}--ask${NO} | ${GR}--nocolor${NO} | ${GR}--pretend${NO} | ${GR}--verbose${NO} ]
+
+${BR}Actions:${NO}  [ ${GR}--delete${NO} ] [ ${GR}--move=<dir>${NO} ]
+
+END
+
+    if [[ $help_more != 1 ]]; then
+      cat <<END
+
+    For more help try '${fullprog} --help'
+
+END
+    fi
+
+  elif [[ $help_type = extended ]] ; then
+    set_vars
+    print_help "short" "1"
+    cat <<END
+
+${CY}Help (this screen):${NO}
+       ${GR}--help${NO} (${GR}-h${NO} short option)
+              Displays this help
+
+${CY}Actions:${NO}
+       ${GR}--delete${NO} (${GR}-d${NO} short option)
+              Deletes the old files, based on installed packages.
+              This is the default action.
+
+       ${GR}--mirror${NO} (${GR}-m${NO} short option)
+              Deletes the old files, based on all packages on tree.
+              This is for mirror maintenance.
+
+       ${GR}--move=<dir>${NO} (${GR}-M <dir>${NO} short option)
+              Moves the old files to the selected directory.
+       
+${CY}Options:${NO}
+       ${GR}--ask${NO} (${GR}-a${NO} short option)
+              Before performing the clean, display what files will be deleted,
+              in the same format as when using --pretend; then ask whether to
+              continue with the clean or abort.
+
+       ${GR}--nocolor${NO} (${GR}-C${NO} short option)
+              Make sure none of the output from ${prog_name} contains color.
+
+       ${GR}--pretend${NO} (${GR}-p${NO} short option)
+              Instead of actually performing the clean, simply display what
+              files *would* have been deleted if --pretend weren't used.
+
+       ${GR}--verbose${NO} (${GR}-v${NO} short option)
+              Tell ${fullprog} to run in verbose mode. Shows the list of files to
+              delete.
+       
+       ${GR}--version${NO} (${GR}-V${NO} short option)
+              Displays the version of ${prog_name}.
+
+${CY}Arguments:${NO}
+       ${GR}dist${NO}
+              Remove old dist files on ${GR}${portage_distdir}${NO}
+
+       ${GR}binpkg${NO}
+              Remove old binary files on ${GR}${portage_binpkgdir}${NO}
+
+       ${GR}worktmp${NO}
+              Remove old temporary files on ${GR}${portage_worktmpdir}${NO}
+
+       ${GR}log${NO}
+              Remove old log files on ${GR}${portage_logdir:-${RD}\$PORT_LOGDIR}${NO}
+
+       ${GR}all${NO}
+              Remove old files on ${GR}${portage_distdir}${NO},
+              ${GR}${portage_binpkgdir}${NO}, ${GR}${portage_worktmpdir}${NO},
+              ${portage_logdir/*/${NO}and ${GR}${portage_logdir}}
+
+END
+  fi
+}
+
+set_ifs() {
+  oldIFS="${IFS}"
+  IFS=' '
+}
+
+reset_ifs() {
+  IFS="${oldIFS}"
+}
+
+eval_this() {
+  echo $(eval echo \$${1}_${2}dir)
+}
+
+set_status() {
+  echo -e " ${1}" >> ${tmp_dir}/status
+}
+
+upper() {
+  echo "$*" | tr [[:lower:]] [[:upper:]]
+}
+
+query_database() {
+  set_xterm_title "${fullprog}: Querying database..."
+  set_ifs
+  if [[ -z ${set_vars_once} ]]; then
+    set_vars_once="1"
+    set_vars
+  fi
+  if [[ -z ${query_db_once} ]]; then
+    query_db_once="1"
+    dbpkg_files="`
+    find ${portage_db} -mindepth 2 -maxdepth 2 -type d | cut -c13-`"
+  fi
+  reset_ifs
+  set_xterm_title "${fullprog}: Querying database... done!"
+}
+
+i_log() {
+  echo $dbpkg_files | \
+  while read db
+  do
+    echo ${db/\//:}'*'.log
+  done
+}
+
+c_log() {
+  ls -1 ${portage_logdir} 2>/dev/null | while read c_log; do
+    echo "${c_log/+([[:digit:]])-/*}"
+  done
+}
+
+i_worktmp() {
+  echo $dbpkg_files | \
+  while read db
+  do
+    echo ${db##*/}
+  done
+}
+
+c_worktmp() {
+  ls -1 ${portage_worktmpdir} 2>/dev/null | grep -v homedir
+}
+
+i_dist() {
+  set_ifs
+  echo $dbpkg_files | \
+  while read db
+  do
+    for N_portage_dirs in ${!portage_dirs[@]}
+    do
+      cat ${portage_dirs[$N_portage_dirs]}/${db/-[0-9]*/}/files/digest-${db##*/} 2>/dev/null
+    done
+  done | \
+  awk '{print $3}'
+  reset_ifs
+}
+
+c_dist() {
+  ls -1 ${portage_distdir} 2>/dev/null | grep -Ev '^(cvs|svn)-src$'
+}
+
+i_binpkg() {
+  echo $dbpkg_files | \
+  while read db
+  do
+    echo All/${db##*/}.tbz2
+    echo ${db}.tbz2
+  done
+}
+
+c_binpkg() {
+  find  $portage_binpkgdir -type f -follow |\
+  while read binpkg
+  do
+    echo ${binpkg/$portage_binpkgdir\//}
+  done
+}
+
+generate_filelist(){
+  if [[ "`eval_this portage ${1}`" == "" ]]; then
+    set_status "${RD}*${NO} The ${RD}`eval_this varname ${1}`${NO} variable is not set."
+    echo -e "  [ ${Rd}${1}${NO} ]"
+  elif [[ ! -d `eval_this portage ${1}` ]]; then
+    set_status "${RD}*${NO} The directory ${RD}`eval_this portage ${1}`${NO} do not exist."
+    echo -e "  [ ${Rd}${1}${NO} ]"
+  elif [[ ! -r `eval_this portage ${1}` ]]; then
+    set_status "${RD}*${NO} You don't have permission to access ${RD}`eval_this portage ${1}`${NO}."
+    set_status "  Perhaps you are not in 'portage' group?."
+    echo -e "  [ ${Rd}${1}${NO} ]"
+  else
+    set_xterm_title "${fullprog}: Reading [${1}] database..."
+    compare_lists i_${1} c_${1}
+    set_xterm_title "${fullprog}: Reading [${1}] database... done!"
+    if [ ${#files2delete[@]} == 0 ]; then
+      [[ -z ${option_verbose} ]] && echo -e "  [ ${Cy}${1}${NO} ] \t\t  0 B" || echo -e "  [ ${Cy}${1}${NO} ]"
+      set_status "${YL}*${NO} `eval_this portage ${1}` ${verb:-was} already clean."
+    else
+      set_ifs
+      echo ${files2delete[@]} | \
+      while read files; do
+        echo eval rm -rf \"`eval_this portage ${1}`/$files\" >> ${tmp_dir}/rmlist
+      done
+      reset_ifs
+      cd `eval_this portage ${1}`
+      eval tb_${1}dir=$(du -cb ${files2delete[@]} 2>/dev/null | tail -n 1 | cut -f1)
+      [[ ! ${ask_pretend} == "pretend" ]] && \
+      set_status "${GR}*${NO} `eval_this portage ${1}` cleaned."
+      if [[ -n ${option_verbose} ]]; then
+        verbose_output ${1}
+      else
+        echo -e "  [ ${Cy}${1}${NO} ] \t\t  $(get_GMKB `eval_this tb ${1}`)"
+      fi
+    fi
+  fi
+}
+
+verbose_output() {
+  du -h --max-depth=0 ${files2delete[@]} 2>/dev/null | \
+  awk '{ print $2, s, $1}' | \
+  sed -r "s:.*\s:${Gr}\\0${NO}:" | \
+  while read i; do
+    echo -e "  [ ${Cy}${1}${NO} ]\t$i"
+  done
+}
+
+compare_lists() {
+  set_ifs
+  ${1} | sort -u >| ${tmp_dir}/${1}
+  ${2} | sort -u >| ${tmp_dir}/${2}
+  files2delete=(`comm -1 -3 ${tmp_dir}/${1} ${tmp_dir}/${2}`)
+  reset_ifs
+}
+
+get_GMKB() {
+  if [[ "${#1}" -ge "10" ]]; then
+    echo "$(( ${1}/1073741824 )) GiB"
+  elif [[ "${#1}" -ge "7" ]]; then
+    echo "$(( ${1}/1048576 )) MiB"
+  elif [[ "${#1}" -ge "4" ]]; then
+    echo "$(( ${1}/1024 )) KiB"
+  else
+    echo "${1} bytes"
+  fi
+}
+
+print_totalbytes() {
+  totalbytes=$(( ${tb_binpkgdir:-0} + ${tb_distdir:-0} + ${tb_logdir:-0} + ${tb_worktmpdir:-0} ))
+  echo -e "\n  [ ${GR}total${NO} ] \t\t +${BR}$(get_GMKB $totalbytes)${NO}"
+}
+
+query_user() {
+  set_xterm_title "${fullprog}: ${1}"
+  prompt="${BR}${1}${NO} "
+  shift
+  rprompt="[${GR}Yes${NO}/${RD}No${NO}] "
+  responses=( Yes No )
+  echo -en "\n$prompt"
+  # Ctrl-C
+  trap "echo 'Interrupted.' >&2; exit 0" 2
+  while true; do
+    if read -e -p "$rprompt"; then
+      for ((i=0; i<${#responses[@]}; ++i)); do
+        response="${responses[$i]}"
+        [[ "$REPLY" == "${response:0:${#REPLY}}" ]] \
+        && return $i
+      done
+      for ((i=0; i<${#responses[@]}; ++i)); do
+        response="${responses[$i]}"
+        [[ "$(upper "$REPLY")" == "$(upper "${response:0:${#REPLY}}")" ]] \
+        && return $i
+      done
+      set_xterm_title "${fullprog}: Sorry, response '$REPLY' not understood."
+      echo "Sorry, response '$REPLY' not understood." >&2
+      echo -en "\n$prompt"
+    else
+      # Ctrl-D
+      echo "Interrupted." >&2
+      exit 0
+    fi
+  done
+  trap - 2
+}
+
+ask_remove_files() {
+  [[ ! -f ${tmp_dir}/rmlist ]] && ask_pretend="nothing"
+  case $ask_pretend in
+    nothing ) echo -e "${BR}\nNothing to delete${NO}" ; finish_clean;;
+    pretend ) finish_clean;;
+    ask ) while :; do
+    query_user "Do you want me to delete these old${deleargs:- }files?"
+      case $? in
+        0 ) remove_files && break ;;
+        1 ) exit 0 ;;
+      esac
+    done;;
+    * ) remove_files;;
+  esac
+}
+
+remove_files(){
+  trap "echo '${RD}X${NO}' >&2; exit 0" 2
+  echo -e "\n>>> Waiting 5 seconds before starting..."
+  echo ">>> (Control-C + Enter to abort)..."
+  echo -n ">>> Cleaning in "
+  for seconds in {5..1}; do
+    set_xterm_title "${fullprog}: Waiting ${seconds} seconds before starting..."
+    echo -n "${RD}${seconds}${NO} "
+    sleep 1
+  done
+  echo
+  trap - 2
+  set_xterm_title "${fullprog}: Deleting old${deleargs:- }files..."
+  echo -e "\n>>> Deleting old${deleargs:- }files..."
+  while :; do
+    [[ "$(whoami)" == "root" ]] || echo -en "\nPlease enter your root " 
+    su -c 'cat '"${tmp_dir}"'/rmlist | sh'
+    case $? in
+      0) set_xterm_title "${fullprog}: Deleting old${deleargs:- }files... done!"
+         finish_clean
+         return 0;;
+      1) continue;;
+      *) exit 1;;
+    esac
+  done
+}
+
+finish_clean() {
+  echo
+  set_status ""
+  cat "${tmp_dir}/status"
+  exit 0
+}
+
+##for ((i=$OPTIND; i<=$#; ++i)); do
+###while getopts "m:adhpvVC-" OPT
+###  do case "$OPT" in
+###      a ) ask_pretend="ask";;
+###      d ) action_delete="yes";;
+###      m ) action_move="yes"; echo ${OPTARG};;
+###      h ) option_help="yes";;
+###      C ) option_color="no";;
+###      p ) verb="is"; ask_pretend="pretend";;
+###      v ) option_verbose="yes";;
+###      V ) option_version="yes";;
+###      - ) break ;;
+###      * ) should_exit="yes"; show_help ;;
+###  esac
+###done
+##
+###for ((i=$OPTIND; i<=$#; ++i)); do
+###  case ${!i} in
+###      --ask ) ask_pretend="ask";;
+###      --delete ) action_delete="yes";;
+###      --move ) action_move="yes"; echo ${OPTARG};;
+###      --help ) option_help="yes";;
+###      --nocolor ) option_color="no";;
+###      --pretend ) verb="is"; ask_pretend="pretend";;
+###      --verbose ) option_verbose="yes";;
+###      --version ) option_version="yes";;
+###      binpkg ) delete_argument="binpkg ${delete_argument}" ;;
+###      dist ) delete_argument="dist ${delete_argument}" ;;
+###      log ) delete_argument="log ${delete_argument}" ;;
+###      worktmp ) delete_argument="worktmp ${delete_argument}" ;;
+###      all ) delete_argument="binpkg dist log worktmp" ;;
+###      * ) OPTIND=$i; should_exit="yes" ; show_help "illegal option -- ${!i}" ;;
+###  esac
+###done
+##
+##for ((i=$OPTIND; i<=$# ; ++i)); do
+##  case ${!i} in
+##      -a | --ask ) ask_pretend="ask";;
+##      -d | --delete ) action_delete="yes";;
+##      -h | --help ) option_help="yes";;
+##      -C | --nocolor ) option_color="no";;
+##      -p | --pretend ) verb="is"; ask_pretend="pretend";;
+##      -v | --verbose ) option_verbose="yes";;
+##      -V | --version ) option_version="yes";;
+##      binpkg ) delete_argument="binpkg ${delete_argument}" ;;
+##      dist ) delete_argument="dist ${delete_argument}" ;;
+##      log ) delete_argument="log ${delete_argument}" ;;
+##      worktmp ) delete_argument="worktmp ${delete_argument}" ;;
+##      all ) delete_argument="binpkg dist log worktmp" ;;
+##      * ) OPTIND=$i; should_exit="yes" ; show_help "${!i} is an invalid option"; break ;;
+##    --* )
+##      case ${!i} in
+##        --delete ) action_delete="yes";;
+##        --move ) action_move="yes"; i=`expr $i + 1`; echo ${!i}; i=`expr $i + 1`; break;;
+##        --help ) option_help="yes";;
+##        --nocolor ) option_color="no";;
+##        --ask ) ask_pretend="ask";;
+##        --pretend ) verb="is"; ask_pretend="pretend";;
+##        --verbose ) option_verbose="yes";;
+##        --version ) option_version="yes";;
+##        * ) OPTIND=$i; should_exit="yes" ; show_help "${!i} is an invalid option"; break ;;
+##      esac;;
+##
+##    -m ) action_move="yes"; i=`expr $i + 1`; echo ${!i}; i=`expr $i + 1` ; break ;;
+##
+##    -* ) opts=${!i}
+##      for((j=1; j < ${#opts} ; ++j)) ; do
+##        case ${!i:$j:1} in
+##          a ) ask_pretend="ask";;
+##          d ) action_delete="yes";;
+##          h ) option_help="yes";;
+##          C ) option_color="no";;
+##          p ) verb="is"; ask_pretend="pretend";;
+##          v ) option_verbose="yes";;
+##          V ) option_version="yes";;
+##          * ) OPTIND=$i; should_exit="yes" ; show_help "${!i} is an invalid option"; break ;;
+##        esac
+##      done;;
+##
+##    binpkg ) delete_argument="binpkg ${delete_argument}" ;;
+##    dist ) delete_argument="dist ${delete_argument}" ;;
+##    log ) delete_argument="log ${delete_argument}" ;;
+##    worktmp ) delete_argument="worktmp ${delete_argument}" ;;
+##    all ) delete_argument="binpkg dist log worktmp" ;;
+##    * ) OPTIND=$i; should_exit="yes" ; show_help "${!i} is an invalid option"; break ;;
+
+
+for ((i=$OPTIND; i<=$#; ++i)); do
+  case ${!i} in
+      -a | --ask ) ask_pretend="ask";;
+      -d | --delete ) action_delete="yes";;
+      -h | --help ) option_help="yes";;
+      -C | --nocolor ) option_color="no";;
+      -p | --pretend ) verb="is"; ask_pretend="pretend";;
+      -v | --verbose ) option_verbose="yes";;
+      -V | --version ) option_version="yes";;
+      binpkg ) delete_argument="binpkg ${delete_argument}" ;;
+      dist ) delete_argument="dist ${delete_argument}" ;;
+      log ) delete_argument="log ${delete_argument}" ;;
+      worktmp ) delete_argument="worktmp ${delete_argument}" ;;
+      all ) delete_argument="binpkg dist log worktmp" ;;
+      * ) OPTIND=$i; should_exit="yes" ; show_help "${!i} is an invalid option"; break ;;
+  esac
+done
+
+check_for_color
+
+tmp_dir="$(mktemp -t -d ${prog_name}.XXXXXX)"
+if [ $? -ne 0 ]; then
+  echo -e "\n ${RD}*${NO} Could not set a valid temporary directory\n"
+  exit 1
+fi
+
+trap "rm -r $tmp_dir" 0
+trap "rm -r $tmp_dir" 15
+
+if [ $# -eq "0" ]; then
+  show_help "please tell me what to do."
+elif [[ -n "${option_help}" ]]; then
+  show_help
+elif [[ -n "${option_version}" ]]; then
+  print_version
+fi
+
+if [[ -n "${action_delete}" ]]; then
+  action_delete="yes"
+fi
+
+if [[ $# -ge "1" ]] && \
+   [[ -z "${delete_argument}" ]] && \
+   [[ -z "${option_help}" ]] && \
+   [[ ! "${should_exit}" = "yes" ]]; then
+  show_help "please tell me what you want to delete."
+elif [[ -n "${option_help}" ]]; then
+  show_help "" "extended" "1"
+else
+  if [[ -z "${printed_help}" ]] && [[ ! "${should_exit}" = "yes" ]]; then
+    delete_argument=($(for d_args in `echo ${delete_argument}`; do echo ${d_args}; done | sort -u))
+    [[ "${#delete_argument[@]}" == 1 ]] && deleargs=" ${delete_argument} "
+    echo -e "\n${Gr}These are the old${deleargs:- }files that I would delete:${NO}\n"
+    query_database
+    for N_arguments in ${!delete_argument[@]}
+      do
+        generate_filelist ${delete_argument[$N_arguments]}
+      done
+      print_totalbytes
+      ask_remove_files
+  fi
+fi
+
+if [[ -n "${printed_help}" ]]; then
+  eval print_help ${display_help_args}
+  exit 0
+fi
+
+###############################################################################
+#        Devel Notes
+###############################################################################
+#  * Remove files considering all packages (for mirroring purposes) rather than
+#    just installed packages:
+#
+#        find /usr/portage/ -path '*files/digest-*' -type f -exec cat {} \; | awk '{ print $3 }'
+#        find /usr/portage/ -name digest-\* -type f -exec cat {} \; | awk '{ print $3 }'
+#    
+#    I thinking something like < dist-mirror | binpkg-mirror | all-mirror >
+#    or a --delete-mirror action. But I'm still unsure what is better. If
+#    you have a better {idea,way to do it} don't doubt and tell me :-)
+#   
+#  * Another action by request. --move 
+#  * Use more Indirect variable references ${!var} rather than evals
+###############################################################################
